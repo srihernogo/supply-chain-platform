@@ -1,12 +1,11 @@
 package com.supplychain.inventory.service;
 
-import com.supplychain.common.event.InventoryEvent;
 import com.supplychain.common.exception.ResourceNotFoundException;
 import com.supplychain.common.tenant.TenantContext;
 import com.supplychain.inventory.dto.*;
 import com.supplychain.inventory.entity.*;
 import com.supplychain.inventory.entity.InventoryTransaction.TransactionType;
-import com.supplychain.inventory.event.InventoryEventPublisher;
+import com.supplychain.inventory.outbox.OutboxService;
 import com.supplychain.inventory.repository.*;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -34,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>Optimistic Locking — prevents lost updates in concurrent transactions</li>
  *   <li>Retry — automatic retry with exponential backoff on optimistic lock conflicts</li>
  *   <li>Audit Log — every action recorded with user, time, and details</li>
- *   <li>Kafka Events — published after each successful transaction</li>
+ *   <li>Transactional Outbox — Kafka events persisted in the same DB transaction, relayed asynchronously</li>
  *   <li>Metrics — Prometheus counters for every transaction type</li>
  * </ul>
  */
@@ -49,7 +48,7 @@ public class InventoryService {
     private final MaterialRepository             materialRepo;
     private final WarehouseRepository            warehouseRepo;
     private final AuditLogRepository             auditLogRepo;
-    private final InventoryEventPublisher        eventPublisher;
+    private final OutboxService                  outboxService;
 
     // Prometheus counters
     private final Counter receiptCounter;
@@ -64,14 +63,14 @@ public class InventoryService {
                             MaterialRepository materialRepo,
                             WarehouseRepository warehouseRepo,
                             AuditLogRepository auditLogRepo,
-                            InventoryEventPublisher eventPublisher,
+                            OutboxService outboxService,
                             MeterRegistry meterRegistry) {
         this.trxRepo        = trxRepo;
         this.inventoryRepo  = inventoryRepo;
         this.materialRepo   = materialRepo;
         this.warehouseRepo  = warehouseRepo;
         this.auditLogRepo   = auditLogRepo;
-        this.eventPublisher = eventPublisher;
+        this.outboxService  = outboxService;
 
         this.receiptCounter    = Counter.builder("inventory.transaction.receipt").register(meterRegistry);
         this.transferCounter   = Counter.builder("inventory.transaction.transfer").register(meterRegistry);
@@ -93,7 +92,7 @@ public class InventoryService {
      *   <li>Create InventoryTransaction record</li>
      *   <li>Update Inventory balance (optimistic locking)</li>
      *   <li>Save AuditLog</li>
-     *   <li>Publish Kafka event → triggers Blockchain block creation</li>
+     *   <li>Enqueue outbox event (same transaction) → relay publishes to Kafka for blockchain</li>
      * </ol>
      */
     @Transactional
@@ -147,8 +146,8 @@ public class InventoryService {
                         material.getMaterialCode(), warehouse.getWarehouseCode(), req.getQuantity(), req.getSupplierCode())
         ));
 
-        // 6. Publish Kafka event
-        eventPublisher.publishReceiptEvent(trx, material, warehouse, tenantId);
+        // 6. Transactional outbox (same DB transaction as stock update)
+        outboxService.enqueueReceiptEvent(trx, material, warehouse, tenantId);
 
         receiptCounter.increment();
         log.info("Receipt processed: trxNo={}, material={}, warehouse={}, qty={}, tenant={}",
@@ -215,7 +214,7 @@ public class InventoryService {
                 String.format("{\"material\":\"%s\",\"from\":\"%s\",\"to\":\"%s\",\"qty\":%s}",
                         material.getMaterialCode(), sourceWh.getWarehouseCode(), destWh.getWarehouseCode(), req.getQuantity())));
 
-        eventPublisher.publishTransferEvent(trx, material, sourceWh, destWh, tenantId);
+        outboxService.enqueueTransferEvent(trx, material, sourceWh, destWh, tenantId);
         transferCounter.increment();
         log.info("Transfer processed: trxNo={}, material={}, from={}, to={}, qty={}",
                 trxNo, material.getMaterialCode(), sourceWh.getWarehouseCode(), destWh.getWarehouseCode(), req.getQuantity());
@@ -263,7 +262,7 @@ public class InventoryService {
                 String.format("{\"material\":\"%s\",\"warehouse\":\"%s\",\"qty\":%s,\"workOrder\":\"%s\"}",
                         material.getMaterialCode(), warehouse.getWarehouseCode(), req.getQuantity(), req.getWorkOrderNo())));
 
-        eventPublisher.publishIssueEvent(trx, material, warehouse, tenantId);
+        outboxService.enqueueIssueEvent(trx, material, warehouse, tenantId);
         issueCounter.increment();
         log.info("Issue processed: trxNo={}, material={}, qty={}, workOrder={}",
                 trxNo, material.getMaterialCode(), req.getQuantity(), req.getWorkOrderNo());
@@ -308,7 +307,7 @@ public class InventoryService {
                 String.format("{\"material\":\"%s\",\"oldQty\":%s,\"newQty\":%s,\"reason\":\"%s\"}",
                         material.getMaterialCode(), oldQty, req.getNewQuantity(), req.getReason())));
 
-        eventPublisher.publishAdjustmentEvent(trx, material, warehouse, tenantId);
+        outboxService.enqueueAdjustmentEvent(trx, material, warehouse, tenantId);
         adjustmentCounter.increment();
         log.info("Adjustment processed: trxNo={}, material={}, oldQty={}, newQty={}",
                 trxNo, material.getMaterialCode(), oldQty, req.getNewQuantity());

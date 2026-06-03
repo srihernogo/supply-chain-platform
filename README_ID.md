@@ -98,6 +98,7 @@ graph TD
 * **Multi-schema Database Isolation**: Data antar-penyewa (tenant) dipisahkan secara fisik pada tingkat skema (*schema-level isolation*) di PostgreSQL untuk mencegah kebocoran data.
 * **Idempotency Guard**: Memanfaatkan `X-Idempotency-Key` unik berbasis UUID di setiap transaksi penulisan stok untuk mencegah eksekusi ganda akibat kegagalan jaringan atau retry dari klien.
 * **Optimistic Locking**: Menggunakan kolom `@Version` JPA di tabel `inventory` untuk menangani persaingan update stok (*race condition*) dari transaksi yang berjalan bersamaan secara aman.
+* **Transactional Outbox**: Mutasi inventaris dan payload Kafka disimpan dalam satu transaksi DB lokal; `OutboxMessageRelay` mempublikasikan baris outbox ke Kafka secara asinkron.
 * **Kafka Reliable Delivery & DLQ**: Konfigurasi Kafka menggunakan `enable.idempotence=true` dan `acks=all` untuk memastikan tidak ada data transaksi yang hilang. Event yang gagal diproses setelah retry akan dialihkan ke Dead Letter Queue (DLQ) agar tidak menghambat aliran data utama.
 * **Distributed Tracing**: Integrasi OpenTelemetry dan Zipkin untuk melacak jalur request end-to-end yang melewati berbagai microservices demi mempermudah debugging latensi.
 * **Observabilitas & Metrik**: Metrik internal aplikasi diekspos melalui Micrometer/Prometheus Actuator dan divisualisasikan menggunakan dashboard Grafana yang dinamis.
@@ -164,7 +165,8 @@ supply-chain-platform/
 │       │   ├── controller/ (InventoryController.java, MaterialController.java, WarehouseController.java, TraceabilityController.java)
 │       │   ├── dto/ (ReceiptRequest.java, TransferRequest.java, IssueRequest.java, AdjustmentRequest.java, InventoryTransactionResponse.java)
 │       │   ├── entity/ (Material.java, Warehouse.java, Inventory.java, InventoryTransaction.java, AuditLog.java)
-│       │   ├── event/ (InventoryEventPublisher.java - Penerbit event Kafka)
+│       │   ├── event/ (InventoryEventFactory.java - pembangun payload event)
+│       │   ├── outbox/ (OutboxService, OutboxMessageRelay - transactional outbox)
 │       │   ├── repository/ (MaterialRepository.java, WarehouseRepository.java, InventoryRepository.java, InventoryTransactionRepository.java, AuditLogRepository.java)
 │       │   └── service/ (InventoryService.java, MaterialService.java, WarehouseService.java, TraceabilityService.java)
 │       └── resources/
@@ -217,10 +219,13 @@ Setiap aktivitas mutasi stok penting diarsipkan ke dalam database audit terenkri
 - **Genesis Block**: Dibuat secara otomatis untuk setiap penyewa baru ketika rantai masih kosong.
 - **Validasi Rantai**: Rantai diperiksa dari blok awal hingga akhir. Jika ada manipulasi data manual di database, hash tidak akan cocok dan status integritas menjadi `false`.
 
-### Integrasi Aliran Data Kafka
+### Integrasi Aliran Data Kafka (Transactional Outbox)
 
 ```
-[Inventory Service] ─── (Publish InventoryEvent) ───> [Kafka Topic: inventory-events]
+[Inventory Service]
+   │  @Transactional: stok + audit_log + outbox_events (PENDING)
+   ▼
+[OutboxMessageRelay scheduler] ─── publish ───> [Kafka Topic: inventory-events]
                                                                 │
                                                                 ▼
                                                     [Blockchain Ledger Service]
@@ -229,6 +234,8 @@ Setiap aktivitas mutasi stok penting diarsipkan ke dalam database audit terenkri
                                                                 ▼
                                                     (Simpan Blok Audit Baru)
 ```
+
+Jika Kafka sementara tidak tersedia, baris outbox tetap `PENDING` dan di-retry; database tetap konsisten.
 
 ---
 
@@ -272,6 +279,8 @@ Database yang digunakan memiliki isolasi fisik tingkat skema (*schema-level isol
 * **`audit_logs`**: Catatan sistem untuk kepatuhan (compliance).
   - `id` (BIGSERIAL, PK)
   - `entity_name`, `entity_id`, `action_type`, `performed_by`, `tenant_id`, `details` (JSON)
+* **`outbox_events`**: Transactional outbox untuk relay Kafka (`PENDING` → `SENT` / `FAILED`).
+  - `event_id` (VARCHAR, UNIQUE), `payload` (TEXT), `status`, `retry_count`, `sent_at`
 
 ### C. Skema Blockchain Ledger Service
 * **`blockchain_blocks`**: Daftar blok audit trail kriptografis.

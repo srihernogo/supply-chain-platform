@@ -3,7 +3,7 @@ package com.supplychain.inventory.service;
 import com.supplychain.common.tenant.TenantContext;
 import com.supplychain.inventory.dto.*;
 import com.supplychain.inventory.entity.*;
-import com.supplychain.inventory.event.InventoryEventPublisher;
+import com.supplychain.inventory.outbox.OutboxService;
 import com.supplychain.inventory.repository.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -31,7 +31,7 @@ class InventoryServiceTest {
     @Mock private MaterialRepository materialRepo;
     @Mock private WarehouseRepository warehouseRepo;
     @Mock private AuditLogRepository auditLogRepo;
-    @Mock private InventoryEventPublisher eventPublisher;
+    @Mock private OutboxService outboxService;
 
     private InventoryService inventoryService;
 
@@ -43,7 +43,7 @@ class InventoryServiceTest {
         TenantContext.setCurrentTenant("toyota");
         MeterRegistry meterRegistry = new SimpleMeterRegistry();
         inventoryService = new InventoryService(
-                trxRepo, inventoryRepo, materialRepo, warehouseRepo, auditLogRepo, eventPublisher, meterRegistry
+                trxRepo, inventoryRepo, materialRepo, warehouseRepo, auditLogRepo, outboxService, meterRegistry
         );
 
         material = Material.builder()
@@ -88,7 +88,7 @@ class InventoryServiceTest {
         verify(trxRepo).save(any(InventoryTransaction.class));
         verify(inventoryRepo).save(any(Inventory.class));
         verify(auditLogRepo).save(any(AuditLog.class));
-        verify(eventPublisher).publishReceiptEvent(any(), any(), any(), any());
+        verify(outboxService).enqueueReceiptEvent(any(), any(), any(), any());
     }
 
     @Test
@@ -110,7 +110,7 @@ class InventoryServiceTest {
 
         assertThat(response.getId()).isEqualTo(99L);
         verify(inventoryRepo, never()).save(any());
-        verify(eventPublisher, never()).publishReceiptEvent(any(), any(), any(), any());
+        verify(outboxService, never()).enqueueReceiptEvent(any(), any(), any(), any());
     }
 
     @Test

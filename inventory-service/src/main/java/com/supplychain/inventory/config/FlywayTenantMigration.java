@@ -9,13 +9,9 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Configuration;
 
 import javax.sql.DataSource;
-import java.util.List;
-
 @Slf4j
 @Configuration
 public class FlywayTenantMigration implements ApplicationRunner {
-
-    private static final List<String> TENANTS = List.of("toyota", "honda", "mitsubishi", "daihatsu");
 
     private final DataSource dataSource;
 
@@ -28,7 +24,7 @@ public class FlywayTenantMigration implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        for (String tenant : TENANTS) {
+        for (String tenant : TenantSchemas.ALL) {
             try {
                 log.info("Running Flyway migration for tenant schema: {}", tenant);
                 TenantContext.setCurrentTenant(tenant);

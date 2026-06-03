@@ -99,6 +99,7 @@ graph TD
 * **Multi-schema database isolation**: Tenant data is physically separated at the PostgreSQL schema level to prevent cross-tenant data leakage.
 * **Idempotency guard**: Unique `X-Idempotency-Key` (UUID-based) on every stock write transaction to prevent duplicate execution from network failures or client retries.
 * **Optimistic locking**: JPA `@Version` column on the `inventory` table to handle concurrent stock update race conditions safely.
+* **Transactional outbox**: Inventory mutations and Kafka payloads are committed in one local DB transaction; `OutboxMessageRelay` publishes pending rows to Kafka asynchronously.
 * **Kafka reliable delivery & DLQ**: Kafka configured with `enable.idempotence=true` and `acks=all` to avoid lost transactions. Events that fail after retries are routed to a Dead Letter Queue (DLQ) so the main flow is not blocked.
 * **Distributed tracing**: OpenTelemetry and Zipkin integration to trace end-to-end request paths across microservices for latency debugging.
 * **Observability & metrics**: Application metrics exposed via Micrometer/Prometheus Actuator and visualized in Grafana dashboards.
@@ -165,7 +166,8 @@ supply-chain-platform/
 │       │   ├── controller/ (InventoryController.java, MaterialController.java, WarehouseController.java, TraceabilityController.java)
 │       │   ├── dto/ (ReceiptRequest.java, TransferRequest.java, IssueRequest.java, AdjustmentRequest.java, InventoryTransactionResponse.java)
 │       │   ├── entity/ (Material.java, Warehouse.java, Inventory.java, InventoryTransaction.java, AuditLog.java)
-│       │   ├── event/ (InventoryEventPublisher.java — Kafka publisher)
+│       │   ├── event/ (InventoryEventFactory.java — event payload builder)
+│       │   ├── outbox/ (OutboxService, OutboxMessageRelay — transactional outbox)
 │       │   ├── repository/ (MaterialRepository.java, WarehouseRepository.java, InventoryRepository.java, InventoryTransactionRepository.java, AuditLogRepository.java)
 │       │   └── service/ (InventoryService.java, MaterialService.java, WarehouseService.java, TraceabilityService.java)
 │       └── resources/
@@ -220,10 +222,13 @@ Every significant stock mutation is archived in an encrypted audit store.
 - **Genesis block**: Created automatically for each new tenant when the chain is empty.
 - **Chain validation**: The chain is verified from the first block to the last. Manual database tampering breaks hash linkage and integrity returns `false`.
 
-### Kafka Data Flow Integration
+### Kafka Data Flow Integration (Transactional Outbox)
 
 ```
-[Inventory Service] ─── (Publish InventoryEvent) ───> [Kafka Topic: inventory-events]
+[Inventory Service]
+   │  @Transactional: stock + audit_log + outbox_events (PENDING)
+   ▼
+[OutboxMessageRelay scheduler] ─── publish ───> [Kafka Topic: inventory-events]
                                                                 │
                                                                 ▼
                                                     [Blockchain Ledger Service]
@@ -232,6 +237,8 @@ Every significant stock mutation is archived in an encrypted audit store.
                                                                 ▼
                                                     (Persist New Audit Block)
 ```
+
+If Kafka is temporarily unavailable, rows stay `PENDING` and are retried; the database and outbox remain consistent.
 
 ---
 
@@ -277,6 +284,8 @@ The database uses physical schema-level isolation. Default tenant schemas includ
 * **`audit_logs`**: System records for compliance.
   - `id` (BIGSERIAL, PK)
   - `entity_name`, `entity_id`, `action_type`, `performed_by`, `tenant_id`, `details` (JSON)
+* **`outbox_events`**: Transactional outbox for Kafka relay (`PENDING` → `SENT` / `FAILED`).
+  - `event_id` (VARCHAR, UNIQUE), `payload` (TEXT), `status`, `retry_count`, `sent_at`
 
 ### C. Blockchain Ledger Service Schema
 
