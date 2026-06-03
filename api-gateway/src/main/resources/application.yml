@@ -1,0 +1,145 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  # R2DBC for auth.users (reactive)
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/supplychain
+    username: scuser
+    password: scpassword
+    properties:
+      schema: auth
+
+  # Spring Cloud Gateway routes
+  cloud:
+    gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+      routes:
+        # Supplier Service
+        - id: supplier-service
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/suppliers/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: supplier-cb
+                fallbackUri: forward:/fallback/supplier
+
+        # Inventory Service — Inventory endpoints
+        - id: inventory-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/inventory/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: inventory-cb
+
+        # Inventory Service — Traceability endpoints
+        - id: traceability-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/traceability/**
+
+        # Inventory Service — Material endpoints
+        - id: material-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/materials/**
+
+        # Inventory Service — Warehouse endpoints
+        - id: warehouse-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/warehouses/**
+
+        # Blockchain Ledger Service
+        - id: blockchain-service
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/blockchain/**
+
+# JWT config
+jwt:
+  secret: ${JWT_SECRET:supply-chain-jwt-secret-key-must-be-at-least-32-chars}
+  expiration-ms: 86400000  # 24 hours
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+# Logging
+logging:
+  level:
+    com.supplychain: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+
+---
+# Docker profile
+spring:
+  config:
+    activate:
+      on-profile: docker
+
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:supplychain}
+    username: ${DB_USER:scuser}
+    password: ${DB_PASSWORD:scpassword}
+
+  cloud:
+    gateway:
+      routes:
+        - id: supplier-service
+          uri: http://supplier-service:8081
+          predicates:
+            - Path=/api/suppliers/**
+
+        - id: inventory-service
+          uri: http://inventory-service:8082
+          predicates:
+            - Path=/api/inventory/**
+
+        - id: traceability-service
+          uri: http://inventory-service:8082
+          predicates:
+            - Path=/api/traceability/**
+
+        - id: material-service
+          uri: http://inventory-service:8082
+          predicates:
+            - Path=/api/materials/**
+
+        - id: warehouse-service
+          uri: http://inventory-service:8082
+          predicates:
+            - Path=/api/warehouses/**
+
+        - id: blockchain-service
+          uri: http://blockchain-ledger-service:8083
+          predicates:
+            - Path=/api/blockchain/**
+
+management:
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_URL:http://zipkin:9411}/api/v2/spans

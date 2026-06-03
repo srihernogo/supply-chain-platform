@@ -1,0 +1,54 @@
+# Target directories
+target/
+**/target/
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+**/out/
+
+# Eclipse
+.metadata/
+.classpath
+.project
+.settings/
+*.tmp
+*.bak
+*.swp
+*~
+.loadpath
+
+# VS Code
+.vscode/
+
+# OS-generated files
+Thumbs.db
+EHthumbs.db
+Desktop.ini
+.DS_Store
+
+# Log files
+*.log
+logs/
+**/logs/
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# Docker & docker-compose overrides
+docker-compose.override.yml
+
+# Temporary/scratch files
+scratch/
+temp/
+tmp/

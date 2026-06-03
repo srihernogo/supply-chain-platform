@@ -1,0 +1,189 @@
+version: '3.9'
+
+networks:
+  supply-chain-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  kafka_data:
+
+services:
+  # ─────────────────────────────────────────────────
+  # PostgreSQL 16 — single instance, multi-schema
+  # ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: sc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: supplychain
+      POSTGRES_USER: scuser
+      POSTGRES_PASSWORD: scpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scuser -d supplychain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # Apache Kafka 3.7 (KRaft — no Zookeeper)
+  # ─────────────────────────────────────────────────
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: sc-kafka
+    restart: unless-stopped
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=1
+      - KAFKA_CFG_NUM_PARTITIONS=3
+      - KAFKA_CFG_LOG_RETENTION_HOURS=168
+      - KAFKA_HEAP_OPTS=-Xmx512m -Xms256m
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # Zipkin — Distributed Tracing
+  # ─────────────────────────────────────────────────
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: sc-zipkin
+    restart: unless-stopped
+    ports:
+      - "9411:9411"
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # API Gateway — Port 8080
+  # ─────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: sc-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - JWT_SECRET=${JWT_SECRET:-c3VwcGx5Y2hhaW4tamV0LXNlY3JldC1rZXktbXVzdC1iZS0yNTYtYml0cw==}
+      - SUPPLIER_SERVICE_URL=http://supplier-service:8081
+      - INVENTORY_SERVICE_URL=http://inventory-service:8082
+      - BLOCKCHAIN_SERVICE_URL=http://blockchain-ledger-service:8083
+      - ZIPKIN_URL=http://zipkin:9411
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # Supplier Service — Port 8081
+  # ─────────────────────────────────────────────────
+  supplier-service:
+    build:
+      context: ./supplier-service
+      dockerfile: Dockerfile
+    container_name: sc-supplier
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=supplychain
+      - DB_USER=scuser
+      - DB_PASSWORD=scpassword
+      - JWT_SECRET=${JWT_SECRET:-c3VwcGx5Y2hhaW4tamV0LXNlY3JldC1rZXktbXVzdC1iZS0yNTYtYml0cw==}
+      - ZIPKIN_URL=http://zipkin:9411
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # Inventory Service — Port 8082
+  # ─────────────────────────────────────────────────
+  inventory-service:
+    build:
+      context: ./inventory-service
+      dockerfile: Dockerfile
+    container_name: sc-inventory
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=supplychain
+      - DB_USER=scuser
+      - DB_PASSWORD=scpassword
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - JWT_SECRET=${JWT_SECRET:-c3VwcGx5Y2hhaW4tamV0LXNlY3JldC1rZXktbXVzdC1iZS0yNTYtYml0cw==}
+      - ZIPKIN_URL=http://zipkin:9411
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - supply-chain-net
+
+  # ─────────────────────────────────────────────────
+  # Blockchain Ledger Service — Port 8083
+  # ─────────────────────────────────────────────────
+  blockchain-ledger-service:
+    build:
+      context: ./blockchain-ledger-service
+      dockerfile: Dockerfile
+    container_name: sc-blockchain
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=supplychain
+      - DB_USER=scuser
+      - DB_PASSWORD=scpassword
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - JWT_SECRET=${JWT_SECRET:-c3VwcGx5Y2hhaW4tamV0LXNlY3JldC1rZXktbXVzdC1iZS0yNTYtYml0cw==}
+      - ZIPKIN_URL=http://zipkin:9411
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - supply-chain-net
