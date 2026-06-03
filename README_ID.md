@@ -1,6 +1,6 @@
 # Panduan Komprehensif: Platform Rantai Pasok & Audit Ledger Blockchain Multi-Tenant
 
-English summary: [README.md](README.md)
+Versi Bahasa Inggris: [README.md](README.md)
 
 Platform Rantai Pasok & Inventaris tingkat Enterprise berbasis **Multi-Tenant** dengan **Audit Trail Blockchain Privat** yang tidak dapat diubah (immutable). Proyek ini dirancang sebagai portofolio Senior Java Engineer, mengimplementasikan arsitektur mikro (microservices) modern yang kuat, aman, dan mudah dipantau.
 
