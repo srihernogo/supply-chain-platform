@@ -1,5 +1,7 @@
 # Panduan Komprehensif: Platform Rantai Pasok & Audit Ledger Blockchain Multi-Tenant
 
+English summary: [README.md](README.md)
+
 Platform Rantai Pasok & Inventaris tingkat Enterprise berbasis **Multi-Tenant** dengan **Audit Trail Blockchain Privat** yang tidak dapat diubah (immutable). Proyek ini dirancang sebagai portofolio Senior Java Engineer, mengimplementasikan arsitektur mikro (microservices) modern yang kuat, aman, dan mudah dipantau.
 
 Sistem ini dibangun menggunakan **Java 21**, **Spring Boot 3.3.x**, **Apache Kafka**, **PostgreSQL** (dengan pendekatan isolasi *Schema-per-Tenant*), **Spring Cloud Gateway**, **Docker**, serta ekosistem monitoring dan observabilitas penuh.
@@ -79,16 +81,16 @@ graph TD
 | **Language** | Java 21 (LTS) |
 | **Framework** | Spring Boot 3.3.x / Spring Cloud |
 | **Security** | Spring Security + JWT (JJWT 0.12) |
-| **Messaging** | Apache Kafka 3.7 |
+| **Messaging** | Apache Kafka 7.6 (Confluent, mode KRaft — tanpa ZooKeeper) |
 | **Database** | PostgreSQL 16 |
 | **Migration** | Flyway (Multi-schema dynamic migration) |
 | **ORM** | Spring Data JPA + Hibernate |
 | **Observability** | Micrometer + Prometheus + Grafana |
 | **Distributed Tracing** | OpenTelemetry + Zipkin |
 | **Testing** | JUnit 5, Testcontainers, Mockito, MockMvc |
-| **Containerization** | Docker + Docker Compose |
+| **Containerization** | Docker Compose (image runtime saja, basis JRE) |
 | **CI/CD Pipeline** | GitHub Actions |
-| **Build Tool** | Maven |
+| **Build Tool** | Maven (kompilasi di host; cache `~/.m2` / `%USERPROFILE%\.m2`) |
 
 ### Fitur Keamanan & Standar Enterprise (Production Grade Features)
 
@@ -126,7 +128,7 @@ supply-chain-platform/
 │
 ├── api-gateway/ (Layanan Routing & Centralized Security)
 │   ├── pom.xml
-│   ├── Dockerfile
+│   ├── Dockerfile          # Runtime-only: COPY target/*.jar (tanpa stage Maven)
 │   └── src/main/
 │       ├── java/com/supplychain/gateway/
 │       │   ├── ApiGatewayApplication.java (Boot Gateway)
@@ -139,7 +141,7 @@ supply-chain-platform/
 │
 ├── supplier-service/ (Layanan Pengelolaan Master Data Supplier)
 │   ├── pom.xml
-│   ├── Dockerfile
+│   ├── Dockerfile          # Runtime-only: COPY target/*.jar
 │   └── src/main/
 │       ├── java/com/supplychain/supplier/
 │       │   ├── SupplierServiceApplication.java
@@ -154,7 +156,7 @@ supply-chain-platform/
 │
 ├── inventory-service/ (Layanan Utama Mutasi Stok & Transaksi Gudang)
 │   ├── pom.xml
-│   ├── Dockerfile
+│   ├── Dockerfile          # Runtime-only: COPY target/*.jar
 │   └── src/main/
 │       ├── java/com/supplychain/inventory/
 │       │   ├── InventoryServiceApplication.java
@@ -171,7 +173,7 @@ supply-chain-platform/
 │
 └── blockchain-ledger-service/ (Layanan Audit Immutable Ledger Kriptografis)
     ├── pom.xml
-    ├── Dockerfile
+    ├── Dockerfile          # Runtime-only: COPY target/*.jar
     └── src/main/
         ├── java/com/supplychain/blockchain/
         │   ├── BlockchainLedgerApplication.java
@@ -251,8 +253,8 @@ Database yang digunakan memiliki isolasi fisik tingkat skema (*schema-level isol
 * **`materials`**: Master data material/barang.
   - `id` (BIGSERIAL, PK)
   - `material_code` (VARCHAR, UNIQUE)
-  - `material_name` (VARCHAR), `category` (VARCHAR), `uom` (VARCHAR)
-  - `min_stock_level` (DECIMAL), `max_stock_level` (DECIMAL), `active` (BOOLEAN)
+  - `material_name` (VARCHAR), `category` (VARCHAR), `unit` (VARCHAR)
+  - `min_stock_level` (INTEGER), `active` (BOOLEAN)
 * **`warehouses`**: Daftar gudang fisik.
   - `id` (BIGSERIAL, PK)
   - `warehouse_code` (VARCHAR, UNIQUE), `warehouse_name` (VARCHAR), `warehouse_type` (VARCHAR)
@@ -283,32 +285,86 @@ Database yang digunakan memiliki isolasi fisik tingkat skema (*schema-level isol
 
 ---
 
-## 🚀 6. Langkah-Langkah Menjalankan Project (Step-by-Step)
+## 🏗️ 6. Strategi Build & Image Docker
 
-### Prasyarat System:
-* Java Development Kit (JDK) 21
-* Apache Maven 3.9+
-* Docker Desktop & Docker Compose v2+
+Kompilasi Java dilakukan **di host** menggunakan Maven lokal. Setiap `Dockerfile` layanan hanya membuat **image runtime**: menyalin JAR hasil `mvn package` dari folder `target/` ke image JRE (`eclipse-temurin:21-jre-alpine`). Docker **tidak** menarik image `maven:*` dan **tidak** menjalankan `mvn` saat `docker build`.
 
-### Langkah 1: Kloning & Kompilasi Project
-Pertama, lakukan instalasi module dependencies dan kompilasi package jar:
+| Keuntungan | Penjelasan |
+|---|---|
+| Build Docker lebih cepat | Tidak ada unduhan dependency di dalam layer Docker |
+| Cache Maven lokal | Memakai repositori host: `~/.m2` (Linux/macOS) atau `%USERPROFILE%\.m2` (Windows) |
+| Konsisten dengan IDE | Perintah yang sama dengan build di IntelliJ / VS Code |
+
+**Output JAR** (contoh setelah build sukses):
+
+- `api-gateway/target/api-gateway-1.0.0.jar`
+- `supplier-service/target/supplier-service-1.0.0.jar`
+- `inventory-service/target/inventory-service-1.0.0.jar`
+- `blockchain-ledger-service/target/blockchain-ledger-service-1.0.0.jar`
+
+Build satu modul saja (modul `common` ikut ter-install otomatis):
+
 ```bash
-# Kompilasi seluruh module multi-module Maven dan lewati eksekusi pengujian sementara
+mvn clean package -pl inventory-service -am -DskipTests
+```
+
+> **Penting:** Jalankan `mvn package` **sebelum** `docker compose build`. Tanpa JAR di `target/`, proses `COPY target/*.jar` pada Dockerfile akan gagal.
+
+Pipeline CI (`.github/workflows/ci.yml`) mengikuti pola yang sama: `mvn` di runner GitHub Actions, lalu image Docker dari JAR yang sudah ada.
+
+---
+
+## 🚀 7. Langkah-Langkah Menjalankan Project (Step-by-Step)
+
+### Prasyarat:
+* **JDK 21**
+* **Apache Maven 3.9+** (terpasang di PATH)
+* **Docker Desktop** & **Docker Compose v2+**
+
+### Langkah 1: Kompilasi di host (wajib)
+```bash
 mvn clean package -DskipTests
 ```
 
-### Langkah 2: Jalankan Infrastruktur & Microservices via Docker Compose
-Jalankan file docker-compose utama untuk mengaktifkan database PostgreSQL, Kafka broker, Zipkin (Tracing), serta seluruh container mikro:
+Perintah ini mengisi `target/` di setiap layanan dan memakai cache Maven lokal Anda.
+
+### Langkah 2: Jalankan stack dengan Docker Compose
 ```bash
-# Menyalakan seluruh service di background
-docker-compose up --build -d
-```
-Verifikasi status container dengan perintah:
-```bash
-docker-compose ps
+docker compose up --build -d
 ```
 
-### Langkah 3: Jalankan Monitoring & Observabilitas (Opsional)
+Flag `--build` membangun ulang image runtime dari JAR di `target/`; **bukan** mengompilasi ulang sumber Java di dalam container.
+
+Layanan yang aktif:
+
+| Komponen | Port | Keterangan |
+|---|---|---|
+| PostgreSQL | `5432` | Skema multi-tenant |
+| Kafka (KRaft) | `9092` / `9094` | `confluentinc/cp-kafka:7.6.1` |
+| Zipkin | `9411` | Distributed tracing |
+| API Gateway | `8080` | Entry point |
+| Supplier Service | `8081` | |
+| Inventory Service | `8082` | Producer Kafka |
+| Blockchain Ledger | `8083` | Consumer Kafka |
+
+Verifikasi:
+```bash
+docker compose ps
+```
+
+### Siklus pengembangan (ubah kode → jalankan ulang)
+```bash
+mvn clean package -DskipTests
+docker compose up --build -d
+```
+
+Atau satu layanan saja:
+```bash
+mvn clean package -pl inventory-service -am -DskipTests
+docker compose up --build -d inventory-service
+```
+
+### Langkah 3: Monitoring & observabilitas (opsional)
 Jika Anda ingin memantau performa platform, aktifkan ekosistem prometheus dan grafana:
 ```bash
 docker-compose -f docker-compose.monitoring.yml up -d
@@ -320,7 +376,7 @@ Dashboard pemantauan yang kini aktif:
 
 ---
 
-## 🧪 7. Skenario & Strategi Pengujian (Testing Strategy)
+## 🧪 8. Skenario & Strategi Pengujian (Testing Strategy)
 
 Proyek ini menerapkan pengujian berlapis mulai dari tingkat kode paling dasar hingga pengujian API terintegrasi secara dinamis.
 
@@ -345,13 +401,13 @@ mvn test
 
 ### B. Integration Testing (Testcontainers & Spring Integration)
 Untuk menguji integrasi nyata dengan komponen database PostgreSQL dan broker Kafka tanpa memengaruhi database lokal, kami menggunakan **Testcontainers**:
-* Library ini secara otomatis memutar container Docker database PostgreSQL dan container Kafka sementara pada saat proses kompilasi pengujian berjalan.
+* Library ini secara otomatis memutar container Docker database PostgreSQL dan container Kafka sementara pada saat `mvn test` di host — terpisah dari image layanan aplikasi yang hanya berisi JRE + JAR.
 * Menguji interaksi database nyata seperti transaksi rollback jika terjadi kegagalan sistem.
 * Menguji pengiriman event melalui broker Kafka dan dikonsumsi dengan benar oleh Blockchain service.
 
 ---
 
-## 💻 8. Uji Coba Penggunaan Manual (Manual API Verification Scenario)
+## 💻 9. Uji Coba Penggunaan Manual (Manual API Verification Scenario)
 
 Berikut adalah skenario uji coba end-to-end API menggunakan tool cURL atau Postman.
 
@@ -372,7 +428,7 @@ Daftarkan material bertipe baja ke database:
 curl -X POST http://localhost:8080/api/materials \
   -H "Authorization: Bearer <GANTI_DENGAN_TOKEN_JWT>" \
   -H "Content-Type: application/json" \
-  -d '{"materialCode": "MAT-STEEL-99", "materialName": "Baja Plat Ultra 2.0mm", "category": "Steel", "uom": "COIL", "minStockLevel": 5.0, "maxStockLevel": 50.0}'
+  -d '{"materialCode": "MAT-STEEL-99", "materialName": "Baja Plat Ultra 2.0mm", "category": "Steel", "unit": "COIL", "minStockLevel": 5}'
 ```
 
 #### Langkah 3: Lakukan Penerimaan Stok (Receipt) dengan Idempotency Key
