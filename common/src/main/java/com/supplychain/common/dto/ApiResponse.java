@@ -9,7 +9,9 @@ import java.time.Instant;
 /**
  * Standard API response wrapper for all services.
  *
- * <p>Success example:
+ * <p>
+ * Success example:
+ * 
  * <pre>
  * {
  *   "success": true,
@@ -19,7 +21,9 @@ import java.time.Instant;
  * }
  * </pre>
  *
- * <p>Error example:
+ * <p>
+ * Error example:
+ * 
  * <pre>
  * {
  *   "success": false,
@@ -35,9 +39,9 @@ import java.time.Instant;
 public class ApiResponse<T> {
 
     private final boolean success;
-    private final String  message;
-    private final T       data;
-    private final String  errorCode;
+    private final String message;
+    private final T data;
+    private final String errorCode;
 
     @Builder.Default
     private final Instant timestamp = Instant.now();

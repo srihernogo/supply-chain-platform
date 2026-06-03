@@ -50,7 +50,7 @@ class InventoryServiceTest {
                 .id(1L)
                 .materialCode("MAT-STEE-001")
                 .materialName("Steel Coil")
-                .uom("COIL")
+                .unit("COIL")
                 .active(true)
                 .build();
 

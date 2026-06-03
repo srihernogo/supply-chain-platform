@@ -28,7 +28,7 @@ public class ChainVerificationController {
         if (isValid) {
             return ResponseEntity.ok(ApiResponse.ok("Blockchain integrity verified successfully — no tampering detected", true));
         } else {
-            return ResponseEntity.ok(ApiResponse.error("WARNING: Blockchain integrity check failed — tampering detected", false));
+            return ResponseEntity.ok(ApiResponse.error("WARNING: Blockchain integrity check failed — tampering detected", "INTEGRITY_CHECK_FAILED"));
         }
     }
 

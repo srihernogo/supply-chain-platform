@@ -50,9 +50,8 @@ public class MaterialService {
         Material existing = getMaterialById(id);
         existing.setMaterialName(updated.getMaterialName());
         existing.setCategory(updated.getCategory());
-        existing.setUom(updated.getUom());
+        existing.setUnit(updated.getUnit());
         existing.setMinStockLevel(updated.getMinStockLevel());
-        existing.setMaxStockLevel(updated.getMaxStockLevel());
         return materialRepository.save(existing);
     }
 

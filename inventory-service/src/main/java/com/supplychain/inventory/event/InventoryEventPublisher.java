@@ -31,7 +31,7 @@ public class InventoryEventPublisher {
                 .destinationWarehouseId(warehouse.getId())
                 .destinationWarehouseCode(warehouse.getWarehouseCode())
                 .quantity(trx.getQuantity())
-                .unit(material.getUom())
+                .unit(material.getUnit())
                 .supplierId(trx.getSupplierCode())
                 .performedBy(trx.getPerformedBy())
                 .occurredAt(LocalDateTime.now())
@@ -54,7 +54,7 @@ public class InventoryEventPublisher {
                 .destinationWarehouseId(destWh.getId())
                 .destinationWarehouseCode(destWh.getWarehouseCode())
                 .quantity(trx.getQuantity())
-                .unit(material.getUom())
+                .unit(material.getUnit())
                 .performedBy(trx.getPerformedBy())
                 .occurredAt(LocalDateTime.now())
                 .build();
@@ -74,7 +74,7 @@ public class InventoryEventPublisher {
                 .sourceWarehouseId(warehouse.getId())
                 .sourceWarehouseCode(warehouse.getWarehouseCode())
                 .quantity(trx.getQuantity())
-                .unit(material.getUom())
+                .unit(material.getUnit())
                 .performedBy(trx.getPerformedBy())
                 .occurredAt(LocalDateTime.now())
                 .build();
@@ -94,7 +94,7 @@ public class InventoryEventPublisher {
                 .destinationWarehouseId(warehouse.getId())
                 .destinationWarehouseCode(warehouse.getWarehouseCode())
                 .quantity(trx.getQuantity())
-                .unit(material.getUom())
+                .unit(material.getUnit())
                 .performedBy(trx.getPerformedBy())
                 .occurredAt(LocalDateTime.now())
                 .build();
