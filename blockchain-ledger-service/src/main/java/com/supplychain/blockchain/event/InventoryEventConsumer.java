@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.supplychain.common.event.InventoryEvent;
 import com.supplychain.common.tenant.TenantContext;
 import com.supplychain.blockchain.service.BlockchainService;
+import com.supplychain.blockchain.entity.Block;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -17,11 +18,7 @@ public class InventoryEventConsumer {
     private final BlockchainService blockchainService;
     private final ObjectMapper objectMapper;
 
-    @KafkaListener(
-            topics = InventoryEvent.TOPIC,
-            groupId = "blockchain-ledger-group",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
+    @KafkaListener(topics = InventoryEvent.TOPIC, groupId = "blockchain-ledger-group", containerFactory = "kafkaListenerContainerFactory")
     public void consume(InventoryEvent event) {
         log.info("Received InventoryEvent: id={}, type={}, tenant={}, transaction={}",
                 event.getEventId(), event.getEventType(), event.getTenantId(), event.getTransactionNo());
@@ -38,10 +35,14 @@ public class InventoryEventConsumer {
             // Convert event payload to JSON string for block storage
             String payloadJson = objectMapper.writeValueAsString(event);
 
-            // Add block to the tenant's blockchain database schema
-            blockchainService.addBlock(event.getTransactionNo(), payloadJson);
-
-            log.info("Event successfully registered to blockchain: eventId={}", event.getEventId());
+            // Use idempotent append: skip if eventId already processed
+            Block result = blockchainService.addBlockIfNotProcessed(event.getEventId(), event.getTransactionNo(),
+                    payloadJson);
+            if (result == null) {
+                log.info("Skipping event because it was already processed: eventId={}", event.getEventId());
+            } else {
+                log.info("Event successfully registered to blockchain: eventId={}", event.getEventId());
+            }
         } catch (Exception e) {
             log.error("Failed to register event to blockchain: eventId={}", event.getEventId(), e);
             // In a production app, we would throw to trigger DLQ processing

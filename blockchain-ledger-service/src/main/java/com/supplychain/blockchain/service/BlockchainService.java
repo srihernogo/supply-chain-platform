@@ -2,6 +2,8 @@ package com.supplychain.blockchain.service;
 
 import com.supplychain.blockchain.entity.Block;
 import com.supplychain.blockchain.repository.BlockRepository;
+import com.supplychain.blockchain.entity.ProcessedEvent;
+import com.supplychain.blockchain.repository.ProcessedEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import java.util.Optional;
 public class BlockchainService {
 
     private final BlockRepository blockRepository;
+    private final ProcessedEventRepository processedEventRepository;
 
     /**
      * Appends a new transaction block to the ledger.
@@ -60,6 +63,61 @@ public class BlockchainService {
     }
 
     /**
+     * Appends a new transaction block to the ledger if the eventId was not
+     * processed yet.
+     * This method is transactional so the processed-event marker and the block are
+     * saved atomically.
+     * Returns the saved Block, or null when the event was already processed.
+     */
+    @Transactional
+    public synchronized Block addBlockIfNotProcessed(String eventId, String transactionNo, String payload) {
+        log.info("Requesting to append block with dedup check: eventId={}, transactionNo={}", eventId, transactionNo);
+
+        if (eventId != null && processedEventRepository.existsByEventId(eventId)) {
+            log.info("Duplicate event detected, skipping append: eventId={}", eventId);
+            return null;
+        }
+
+        Optional<Block> lastBlockOpt = blockRepository.findTopByOrderByBlockIndexDesc();
+        Block lastBlock;
+
+        if (lastBlockOpt.isEmpty()) {
+            lastBlock = createGenesisBlock();
+        } else {
+            lastBlock = lastBlockOpt.get();
+        }
+
+        long nextIndex = lastBlock.getBlockIndex() + 1;
+        LocalDateTime now = LocalDateTime.now();
+        String prevHash = lastBlock.getHash();
+        String hash = calculateHash(nextIndex, prevHash, payload, now, transactionNo);
+
+        Block nextBlock = Block.builder()
+                .blockIndex(nextIndex)
+                .previousHash(prevHash)
+                .hash(hash)
+                .payload(payload)
+                .transactionNo(transactionNo)
+                .timestamp(now)
+                .build();
+
+        Block saved = blockRepository.save(nextBlock);
+
+        // record processed event after successful block save (same transaction)
+        if (eventId != null) {
+            ProcessedEvent marker = ProcessedEvent.builder()
+                    .eventId(eventId)
+                    .processedAt(LocalDateTime.now())
+                    .build();
+            processedEventRepository.save(marker);
+        }
+
+        log.info("Block successfully appended with dedup marker: index={}, hash={}, eventId={}", saved.getBlockIndex(),
+                saved.getHash(), eventId);
+        return saved;
+    }
+
+    /**
      * Verifies the cryptographic integrity of the entire chain.
      */
     @Transactional(readOnly = true)
@@ -80,7 +138,8 @@ public class BlockchainService {
             log.error("Verification failed: genesis previous hash is not '0'");
             return false;
         }
-        String calculatedGenesisHash = calculateHash(0L, "0", genesis.getPayload(), genesis.getTimestamp(), genesis.getTransactionNo());
+        String calculatedGenesisHash = calculateHash(0L, "0", genesis.getPayload(), genesis.getTimestamp(),
+                genesis.getTransactionNo());
         if (!genesis.getHash().equals(calculatedGenesisHash)) {
             log.error("Verification failed: genesis hash mismatch");
             return false;
@@ -93,7 +152,8 @@ public class BlockchainService {
 
             // Verify height linkage
             if (current.getBlockIndex() != previous.getBlockIndex() + 1) {
-                log.error("Verification failed: index gap between block {} and {}", previous.getBlockIndex(), current.getBlockIndex());
+                log.error("Verification failed: index gap between block {} and {}", previous.getBlockIndex(),
+                        current.getBlockIndex());
                 return false;
             }
 
@@ -109,8 +169,7 @@ public class BlockchainService {
                     current.getPreviousHash(),
                     current.getPayload(),
                     current.getTimestamp(),
-                    current.getTransactionNo()
-            );
+                    current.getTransactionNo());
 
             if (!current.getHash().equals(computedHash)) {
                 log.error("Verification failed: data tampering detected at block index {}", current.getBlockIndex());
@@ -140,8 +199,10 @@ public class BlockchainService {
         return blockRepository.save(genesis);
     }
 
-    private String calculateHash(long index, String previousHash, String payload, LocalDateTime timestamp, String transactionNo) {
-        String dataToHash = index + previousHash + payload + timestamp.toString() + (transactionNo != null ? transactionNo : "");
+    private String calculateHash(long index, String previousHash, String payload, LocalDateTime timestamp,
+            String transactionNo) {
+        String dataToHash = index + previousHash + payload + timestamp.toString()
+                + (transactionNo != null ? transactionNo : "");
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(dataToHash.getBytes(StandardCharsets.UTF_8));

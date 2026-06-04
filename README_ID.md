@@ -219,6 +219,8 @@ Setiap aktivitas mutasi stok penting diarsipkan ke dalam database audit terenkri
 - **Genesis Block**: Dibuat secara otomatis untuk setiap penyewa baru ketika rantai masih kosong.
 - **Validasi Rantai**: Rantai diperiksa dari blok awal hingga akhir. Jika ada manipulasi data manual di database, hash tidak akan cocok dan status integritas menjadi `false`.
 
+Untuk menghindari duplikasi blok ketika Kafka mengirim ulang event yang sama (At-Least-Once delivery), consumer Blockchain menyimpan `eventId` yang sudah diproses ke tabel `processed_events` dan menggunakan API append idempoten (`addBlockIfNotProcessed(eventId, ...)`) sehingga pengiriman ulang tidak membuat entri duplikat di ledger.
+
 ### Integrasi Aliran Data Kafka (Transactional Outbox)
 
 ```
@@ -291,6 +293,10 @@ Database yang digunakan memiliki isolasi fisik tingkat skema (*schema-level isol
   - `previous_hash` (VARCHAR(64)) - Hubungan hash ke blok sebelumnya
   - `hash` (VARCHAR(64), UNIQUE) - Hash SHA-256 dari blok saat ini
   - `transaction_no` (VARCHAR(50)) - Nomor transaksi inventaris terkait
+* **`processed_events`**: Melacak event Kafka yang sudah diproses untuk mencegah penulisan ledger ganda.
+  - `id` (BIGSERIAL, PK)
+  - `event_id` (VARCHAR(100), UNIQUE) — Identifier event Kafka
+  - `processed_at` (TIMESTAMP) — Waktu diproses
 
 ---
 

@@ -222,6 +222,8 @@ Every significant stock mutation is archived in an encrypted audit store.
 - **Genesis block**: Created automatically for each new tenant when the chain is empty.
 - **Chain validation**: The chain is verified from the first block to the last. Manual database tampering breaks hash linkage and integrity returns `false`.
 
+To avoid duplicate blocks when Kafka redelivers the same event (At-Least-Once delivery), the Blockchain consumer records processed event IDs in a `processed_events` table and uses an idempotent append API (`addBlockIfNotProcessed(eventId, ...)`) so repeated deliveries do not create duplicate ledger entries.
+
 ### Kafka Data Flow Integration (Transactional Outbox)
 
 ```
@@ -297,6 +299,11 @@ The database uses physical schema-level isolation. Default tenant schemas includ
   - `previous_hash` (VARCHAR(64)) — link to previous block
   - `hash` (VARCHAR(64), UNIQUE) — SHA-256 hash of current block
   - `transaction_no` (VARCHAR(50)) — related inventory transaction number
+
+* **`processed_events`**: Tracks processed Kafka event IDs to ensure idempotent ledger writes.
+  - `id` (BIGSERIAL, PK)
+  - `event_id` (VARCHAR(100), UNIQUE) — Kafka event identifier
+  - `processed_at` (TIMESTAMP) — processing timestamp
 
 ---
 

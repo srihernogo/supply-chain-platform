@@ -16,3 +16,12 @@ CREATE TABLE IF NOT EXISTS blockchain_blocks (
 CREATE INDEX IF NOT EXISTS idx_block_index ON blockchain_blocks(block_index);
 CREATE INDEX IF NOT EXISTS idx_block_hash ON blockchain_blocks(hash);
 CREATE INDEX IF NOT EXISTS idx_block_trx_no ON blockchain_blocks(transaction_no);
+
+-- Table to track processed event IDs for deduplication
+CREATE TABLE IF NOT EXISTS processed_events (
+    id           BIGSERIAL PRIMARY KEY,
+    event_id     VARCHAR(100) NOT NULL UNIQUE,
+    processed_at TIMESTAMP    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_processed_event_id ON processed_events(event_id);
