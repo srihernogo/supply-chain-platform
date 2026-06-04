@@ -27,6 +27,24 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
             @Param("materialId") Long materialId,
             @Param("warehouseId") Long warehouseId);
 
+    /**
+     * Find with PESSIMISTIC lock (SELECT ... FOR UPDATE) — acquires exclusive row
+     * lock immediately.
+     * Use this for write-heavy operations (especially issue/deduction) to prevent
+     * race conditions
+     * entirely instead of retrying on conflicts. More efficient for
+     * high-concurrency scenarios.
+     *
+     * @param materialId  Material ID
+     * @param warehouseId Warehouse ID
+     * @return Inventory with exclusive database lock, or empty if not found
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT i FROM Inventory i WHERE i.material.id = :materialId AND i.warehouse.id = :warehouseId")
+    Optional<Inventory> findByMaterialIdAndWarehouseIdForUpdatePessimistic(
+            @Param("materialId") Long materialId,
+            @Param("warehouseId") Long warehouseId);
+
     /** All stock for a given material across all warehouses */
     @Query("SELECT i FROM Inventory i WHERE i.material.id = :materialId")
     List<Inventory> findByMaterialId(@Param("materialId") Long materialId);
@@ -37,10 +55,10 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
 
     /** Find materials below min stock level — for alerts */
     @Query("""
-        SELECT i FROM Inventory i
-        JOIN i.material m
-        WHERE m.minStockLevel IS NOT NULL
-          AND i.quantity < m.minStockLevel
-    """)
+                SELECT i FROM Inventory i
+                JOIN i.material m
+                WHERE m.minStockLevel IS NOT NULL
+                  AND i.quantity < m.minStockLevel
+            """)
     List<Inventory> findBelowMinStockLevel();
 }
